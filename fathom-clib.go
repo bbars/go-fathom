@@ -1,3 +1,12 @@
+// Syzygy tablebase probe implementation.
+// 
+// This package wraps a fork of an original Fathom tool
+// written in C: https://github.com/jdart1/Fathom.
+// 
+// Also it uses well-known external package https://github.com/notnil/chess
+// as a public communication layer.
+// 
+// Interface methods allow to probe DTZ and WDL tables (*.rtbw and *.rtbz Syzygy tablebases).
 package fathom
 
 // #cgo CFLAGS: -std=c99 -Imodule-fathom/src
@@ -6,9 +15,19 @@ import "C"
 import (
 	// "unsafe"
 	"fmt"
+	"errors"
 	
 	"github.com/notnil/chess"
 )
+
+// No tablebase files are found within specified directory
+var ErrNoTablebases error = errors.New("go-fathom: no tablebase files are found")
+
+// Unable to dig, because the game is over: checkmate
+var ErrCheckmate error = errors.New("go-fathom: checkmate")
+
+// Unable to dig, because the game is over: stalemate
+var ErrStalemate error = errors.New("go-fathom: stalemate")
 
 type cPos C.Pos
 
@@ -53,28 +72,73 @@ func (this WDL) String() string {
 /////////////////////////////////////////////////////
 
 type Fathom interface {
-	ProbeWdl(chessPosition *chess.Position) (WDL, error)
-	ProbeRoot(chessPosition *chess.Position) ([]TbResult, error)
-	ProbeRootDtz(chessPosition *chess.Position, useRule50 bool) ([]TbRootMove, error)
-	ProbeRootWdl(chessPosition *chess.Position, useRule50 bool) ([]TbRootMove, error)
+	// Probe the Win-Draw-Loss (WDL) table.
+	// 
+	// Returns one of: [Loss], [BlessedLoss], [Draw], [CursedWin] or [Win].
+	// When error occurs, WDL results in [WDLUnknown].
+	// 
+	// NOTES:
+	// - Engines should use this function during search.
+	ProbeWDL(chessPosition *chess.Position) (WDL, error)
+	
+	// Probe the Distance-To-Zero (DTZ) table.
+	// 
+	// The suggested move is guaranteed to preserved the WDL value.
+	// Possible errors: [ErrCheckmate], [ErrStalemate] (and other).
+	// 
+	// NOTES:
+	// - Engines can use this function to probe at the root. This function should
+	//   not be used during search.
+	// - DTZ tablebases can suggest unnatural moves, especially for losing
+	//   positions. Engines may prefer to perform traditional search combined with WDL
+	//   move filtering using the alternative results array.
+	// - This function is NOT thread safe. For engines this function should only
+	//   be called once at the root per search.
+	ProbeRoot(chessPosition *chess.Position) (TbMove, []TbResult, error)
+	
+	// Use the DTZ tables to rank and score all root moves.
+	ProbeRootDTZ(chessPosition *chess.Position, useRule50 bool) ([]TbRootMove, error)
+	
+	// Use the WDL tables to rank and score all root moves.
+	// 
+	// NOTES:
+	// - This is a fallback for the case that some or all DTZ tables are missing.
+	ProbeRootWDL(chessPosition *chess.Position, useRule50 bool) ([]TbRootMove, error)
+	
+	// Free any resources allocated by an instance.
+	Close()
 }
 
 type fathom struct {
 	tbDir string
 }
 
+
+// Create new Fathom reader.
+// If no tablebase files are found, then error is returned.
+// 
+// Possible errors: [ErrNoTablebases]
+// 
+// If you don't have tablebase files yet,
+// follow this link (https://github.com/niklasf/shakmaty-syzygy/tree/master/tables)
+// and explore suggested TXT.
+// These TXT files contain URLs to tablebase files you should download.
 func NewFathom(tbDir string) (Fathom, error) {
 	cTbDir := C.CString(tbDir)
 	res := C.tb_init(cTbDir)
 	if res != true {
 		return nil, fmt.Errorf("go-fathom: unable to init tablebases")
 	}
+	if C.TB_LARGEST == 0 {
+		C.tb_free()
+		return nil, ErrNoTablebases
+	}
 	return &fathom{
 		tbDir: tbDir,
 	}, nil
 }
 
-func (this *fathom) ProbeWdl(chessPosition *chess.Position) (WDL, error) {
+func (this *fathom) ProbeWDL(chessPosition *chess.Position) (WDL, error) {
 	pos := &position{chessPosition}
 	cPos := pos.cPos()
 	
@@ -99,7 +163,7 @@ func (this *fathom) ProbeWdl(chessPosition *chess.Position) (WDL, error) {
 	return WDL(res), nil
 }
 
-func (this *fathom) ProbeRoot(chessPosition *chess.Position) ([]TbResult, error) {
+func (this *fathom) ProbeRoot(chessPosition *chess.Position) (TbMove, []TbResult, error) {
 	pos := &position{chessPosition}
 	cPos := pos.cPos()
 	
@@ -121,8 +185,13 @@ func (this *fathom) ProbeRoot(chessPosition *chess.Position) ([]TbResult, error)
 	)
 	// fmt.Println("res", res)
 	// fmt.Println("cResults", cResults)
-	if res == C.TB_RESULT_FAILED {
-		return nil, fmt.Errorf("go-fathom: probe_root failed")
+	switch res {
+	case C.TB_RESULT_FAILED:
+		return nil, nil, fmt.Errorf("go-fathom: probe_root failed")
+	case C.TB_RESULT_CHECKMATE:
+		return nil, nil, ErrCheckmate
+	case C.TB_RESULT_STALEMATE:
+		return nil, nil, ErrStalemate
 	}
 	results := make([]TbResult, 0, len(cResults))
 	for _, cResult := range cResults {
@@ -131,10 +200,10 @@ func (this *fathom) ProbeRoot(chessPosition *chess.Position) ([]TbResult, error)
 		}
 		results = append(results, newTbResult(cResult))
 	}
-	return results, nil
+	return tbMoveLong(res), results, nil
 }
 
-func (this *fathom) ProbeRootDtz(chessPosition *chess.Position, useRule50 bool) ([]TbRootMove, error) {
+func (this *fathom) ProbeRootDTZ(chessPosition *chess.Position, useRule50 bool) ([]TbRootMove, error) {
 	pos := &position{chessPosition}
 	cPos := pos.cPos()
 	
@@ -172,7 +241,7 @@ func (this *fathom) ProbeRootDtz(chessPosition *chess.Position, useRule50 bool) 
 	return results, nil
 }
 
-func (this *fathom) ProbeRootWdl(chessPosition *chess.Position, useRule50 bool) ([]TbRootMove, error) {
+func (this *fathom) ProbeRootWDL(chessPosition *chess.Position, useRule50 bool) ([]TbRootMove, error) {
 	pos := &position{chessPosition}
 	cPos := pos.cPos()
 	
@@ -196,7 +265,7 @@ func (this *fathom) ProbeRootWdl(chessPosition *chess.Position, useRule50 bool) 
 		C.bool(useRule50),
 		&cResults,
 	)
-	fmt.Println("res", res)
+	// fmt.Println("res", res)
 	// fmt.Println("cResults", cResults)
 	results := make([]TbRootMove, cResults.size)
 	for i := 0; i < len(results); i++ {
@@ -248,8 +317,21 @@ func (this tbMove) Move() chess.Move {
 	)
 }
 
+type tbMoveLong uint64
+
+func (this tbMoveLong) Move() chess.Move {
+	return chess.NewMove(
+		chess.Square(int((this & C.TB_RESULT_FROM_MASK) >> C.TB_RESULT_FROM_SHIFT)),
+		chess.Square(int((this & C.TB_RESULT_TO_MASK) >> C.TB_RESULT_TO_SHIFT)),
+		tbPromoToChessPromo(int((this & C.TB_RESULT_PROMOTES_MASK) >> C.TB_RESULT_PROMOTES_SHIFT)),
+		chess.MoveTag(0),
+	)
+}
+
 /////////////////////////////////////////////////////
 
+// A result value comprising:
+// the suggested move, the WDL value and the DTZ value.
 type TbResult interface {
 	TbMove
 	WDL() WDL
@@ -296,6 +378,7 @@ func (this tbResult) DTZ() int {
 
 /////////////////////////////////////////////////////
 
+// Suggests a move, a rank, a score, and a predicted principal variation.
 type TbRootMove interface {
 	TbMove
 	// Principal Variation
