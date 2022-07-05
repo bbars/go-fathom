@@ -1,0 +1,3 @@
+[submodule "module-fathom"]
+	path = module-fathom
+	url = https://github.com/jdart1/Fathom.git
