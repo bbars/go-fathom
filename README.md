@@ -1,5 +1,5 @@
 # go-fathom
-[![GoDoc](http://img.shields.io/badge/go-documentation-blue.svg?style=flat-square)](https://godoc.org/github.com/bbars/go-fathom)
+[![Go Reference](https://pkg.go.dev/badge/github.com/bbars/go-fathom.svg)](https://pkg.go.dev/github.com/bbars/go-fathom)
 
 Syzygy tablebase probe implementation for Go.
 
