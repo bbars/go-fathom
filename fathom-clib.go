@@ -9,8 +9,8 @@
 // Interface methods allow to probe DTZ and WDL tables (*.rtbw and *.rtbz Syzygy tablebases).
 package fathom
 
-// #cgo CFLAGS: -std=c99 -Imodule-fathom/src
-// #include <module-fathom/src/tbprobe.c>
+// #cgo CFLAGS: -std=c99 -Ifathom-copy/src
+// #include <fathom-copy/src/tbprobe.c>
 import "C"
 import (
 	// "unsafe"
