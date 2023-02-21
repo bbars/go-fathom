@@ -1,38 +1,39 @@
-// Syzygy tablebase probe implementation.
-// 
+// Package fathom is a Syzygy tablebase probe implementation.
+//
 // This package wraps a fork of an original Fathom tool
 // written in C: https://github.com/jdart1/Fathom.
-// 
+//
 // Also it uses well-known external package https://github.com/notnil/chess
 // as a public communication layer.
-// 
-// Interface methods allow to probe DTZ and WDL tables (*.rtbw and *.rtbz Syzygy tablebases).
+//
+// Methods allow to probe DTZ and WDL tables (*.rtbw and *.rtbz Syzygy tablebases).
 package fathom
 
 // #cgo CFLAGS: -std=c99 -Ifathom-copy/src
 // #include <fathom-copy/src/tbprobe.c>
 import "C"
 import (
+	"errors"
 	// "unsafe"
 	"fmt"
-	"errors"
-	
+
 	"github.com/notnil/chess"
 )
 
-// No tablebase files are found within specified directory
-var ErrNoTablebases error = errors.New("go-fathom: no tablebase files are found")
+// ErrNoTablebases no tablebase files are found within specified directory
+var ErrNoTablebases = errors.New("go-fathom: no tablebase files are found")
 
-// Unable to dig, because the game is over: checkmate
-var ErrCheckmate error = errors.New("go-fathom: checkmate")
+// ErrCheckmate unable to dig, because the game is over: checkmate
+var ErrCheckmate = errors.New("go-fathom: checkmate")
 
-// Unable to dig, because the game is over: stalemate
-var ErrStalemate error = errors.New("go-fathom: stalemate")
+// ErrStalemate unable to dig, because the game is over: stalemate
+var ErrStalemate = errors.New("go-fathom: stalemate")
 
-type cPos C.Pos
+type cPosType C.Pos
 
 type cCastling int
 
+//goland:noinspection GoSnakeCaseUsage
 const (
 	castlingUnknown = cCastling(0)
 	castling_K      = cCastling(C.TB_CASTLING_K)
@@ -41,7 +42,7 @@ const (
 	castling_q      = cCastling(C.TB_CASTLING_q)
 )
 
-// Win-Draw-Lose result status.
+// WDL win-draw-lose result status.
 type WDL int
 
 const (
@@ -53,8 +54,8 @@ const (
 	Win         = WDL(C.TB_WIN)
 )
 
-func (this WDL) String() string {
-	switch this {
+func (wdl WDL) String() string {
+	switch wdl {
 	case Loss:
 		return "Loss"
 	case BlessedLoss:
@@ -72,20 +73,20 @@ func (this WDL) String() string {
 /////////////////////////////////////////////////////
 
 type Fathom interface {
-	// Probe the Win-Draw-Loss (WDL) table.
-	// 
+	// ProbeWDL probes the win-draw-loss (WDL) table.
+	//
 	// Returns one of: [Loss], [BlessedLoss], [Draw], [CursedWin] or [Win].
 	// When error occurs, WDL results in [WDLUnknown].
-	// 
+	//
 	// NOTES:
 	// - Engines should use this function during search.
 	ProbeWDL(chessPosition *chess.Position) (WDL, error)
-	
-	// Probe the Distance-To-Zero (DTZ) table.
-	// 
-	// The suggested move is guaranteed to preserved the WDL value.
+
+	// ProbeRoot probes the Distance-To-Zero (DTZ) table.
+	//
+	// The suggested move is guaranteed to preserve the WDL value.
 	// Possible errors: [ErrCheckmate], [ErrStalemate] (and other).
-	// 
+	//
 	// NOTES:
 	// - Engines can use this function to probe at the root. This function should
 	//   not be used during search.
@@ -95,17 +96,17 @@ type Fathom interface {
 	// - This function is NOT thread safe. For engines this function should only
 	//   be called once at the root per search.
 	ProbeRoot(chessPosition *chess.Position) (TbMove, []TbResult, error)
-	
-	// Use the DTZ tables to rank and score all root moves.
+
+	// ProbeRootDTZ uses the DTZ tables to rank and score all root moves.
 	ProbeRootDTZ(chessPosition *chess.Position, useRule50 bool) ([]TbRootMove, error)
-	
-	// Use the WDL tables to rank and score all root moves.
-	// 
+
+	// ProbeRootWDL uses the WDL tables to rank and score all root moves.
+	//
 	// NOTES:
 	// - This is a fallback for the case that some or all DTZ tables are missing.
 	ProbeRootWDL(chessPosition *chess.Position, useRule50 bool) ([]TbRootMove, error)
-	
-	// Free any resources allocated by an instance.
+
+	// Close frees any resources allocated by an instance.
 	Close()
 }
 
@@ -113,12 +114,11 @@ type fathom struct {
 	tbDir string
 }
 
-
-// Create new Fathom reader.
+// NewFathom creates a new Fathom reader.
 // If no tablebase files are found, then error is returned.
-// 
+//
 // Possible errors: [ErrNoTablebases]
-// 
+//
 // If you don't have tablebase files yet,
 // follow this link (https://github.com/niklasf/shakmaty-syzygy/tree/master/tables)
 // and explore suggested TXT.
@@ -138,10 +138,10 @@ func NewFathom(tbDir string) (Fathom, error) {
 	}, nil
 }
 
-func (this *fathom) ProbeWDL(chessPosition *chess.Position) (WDL, error) {
+func (f *fathom) ProbeWDL(chessPosition *chess.Position) (WDL, error) {
 	pos := &position{chessPosition}
 	cPos := pos.cPos()
-	
+
 	res := C.tb_probe_wdl(
 		cPos.white,
 		cPos.black,
@@ -156,17 +156,16 @@ func (this *fathom) ProbeWDL(chessPosition *chess.Position) (WDL, error) {
 		C.unsigned(cPos.ep),
 		cPos.turn,
 	)
-	// fmt.Println("res", res)
 	if res == C.TB_RESULT_FAILED {
 		return WDLUnknown, fmt.Errorf("go-fathom: tb_probe_wdl failed")
 	}
 	return WDL(res), nil
 }
 
-func (this *fathom) ProbeRoot(chessPosition *chess.Position) (TbMove, []TbResult, error) {
+func (f *fathom) ProbeRoot(chessPosition *chess.Position) (TbMove, []TbResult, error) {
 	pos := &position{chessPosition}
 	cPos := pos.cPos()
-	
+
 	var cResults [C.TB_MAX_MOVES]C.unsigned
 	res := C.tb_probe_root(
 		cPos.white,
@@ -183,8 +182,6 @@ func (this *fathom) ProbeRoot(chessPosition *chess.Position) (TbMove, []TbResult
 		cPos.turn,
 		&cResults[0],
 	)
-	// fmt.Println("res", res)
-	// fmt.Println("cResults", cResults)
 	switch res {
 	case C.TB_RESULT_FAILED:
 		return nil, nil, fmt.Errorf("go-fathom: probe_root failed")
@@ -203,10 +200,10 @@ func (this *fathom) ProbeRoot(chessPosition *chess.Position) (TbMove, []TbResult
 	return tbMoveLong(res), results, nil
 }
 
-func (this *fathom) ProbeRootDTZ(chessPosition *chess.Position, useRule50 bool) ([]TbRootMove, error) {
+func (f *fathom) ProbeRootDTZ(chessPosition *chess.Position, useRule50 bool) ([]TbRootMove, error) {
 	pos := &position{chessPosition}
 	cPos := pos.cPos()
-	
+
 	var cResults C.struct_TbRootMoves = C.struct_TbRootMoves{
 		0,
 		[C.TB_MAX_MOVES]C.struct_TbRootMove{},
@@ -234,17 +231,17 @@ func (this *fathom) ProbeRootDTZ(chessPosition *chess.Position, useRule50 bool) 
 	for i := 0; i < len(results); i++ {
 		results[i] = newRootMove(cResults.moves[i])
 	}
-	
+
 	if res == 0 {
 		return results, fmt.Errorf("go-fathom: not all probes were successful")
 	}
 	return results, nil
 }
 
-func (this *fathom) ProbeRootWDL(chessPosition *chess.Position, useRule50 bool) ([]TbRootMove, error) {
+func (f *fathom) ProbeRootWDL(chessPosition *chess.Position, useRule50 bool) ([]TbRootMove, error) {
 	pos := &position{chessPosition}
 	cPos := pos.cPos()
-	
+
 	var cResults C.struct_TbRootMoves = C.struct_TbRootMoves{
 		0,
 		[C.TB_MAX_MOVES]C.struct_TbRootMove{},
@@ -271,14 +268,14 @@ func (this *fathom) ProbeRootWDL(chessPosition *chess.Position, useRule50 bool) 
 	for i := 0; i < len(results); i++ {
 		results[i] = newRootMove(cResults.moves[i])
 	}
-	
+
 	if res == 0 {
 		return results, fmt.Errorf("go-fathom: not all probes were successful")
 	}
 	return results, nil
 }
 
-func (this *fathom) Close() {
+func (f *fathom) Close() {
 	C.tb_free()
 }
 
@@ -308,29 +305,29 @@ type TbMove interface {
 
 type tbMove uint16
 
-func (this tbMove) Move() chess.Move {
+func (m tbMove) Move() chess.Move {
 	return chess.NewMove(
-		chess.Square((this >> 6) & 0x3F),
-		chess.Square(this & 0x3F),
-		tbPromoToChessPromo(int((this >> 12) & 0x7)),
+		chess.Square((m>>6)&0x3F),
+		chess.Square(m&0x3F),
+		tbPromoToChessPromo(int((m>>12)&0x7)),
 		chess.MoveTag(0),
 	)
 }
 
 type tbMoveLong uint64
 
-func (this tbMoveLong) Move() chess.Move {
+func (ml tbMoveLong) Move() chess.Move {
 	return chess.NewMove(
-		chess.Square(int((this & C.TB_RESULT_FROM_MASK) >> C.TB_RESULT_FROM_SHIFT)),
-		chess.Square(int((this & C.TB_RESULT_TO_MASK) >> C.TB_RESULT_TO_SHIFT)),
-		tbPromoToChessPromo(int((this & C.TB_RESULT_PROMOTES_MASK) >> C.TB_RESULT_PROMOTES_SHIFT)),
+		chess.Square(int((ml&C.TB_RESULT_FROM_MASK)>>C.TB_RESULT_FROM_SHIFT)),
+		chess.Square(int((ml&C.TB_RESULT_TO_MASK)>>C.TB_RESULT_TO_SHIFT)),
+		tbPromoToChessPromo(int((ml&C.TB_RESULT_PROMOTES_MASK)>>C.TB_RESULT_PROMOTES_SHIFT)),
 		chess.MoveTag(0),
 	)
 }
 
 /////////////////////////////////////////////////////
 
-// A result value comprising:
+// TbResult is a result value comprising:
 // the suggested move, the WDL value and the DTZ value.
 type TbResult interface {
 	TbMove
@@ -339,9 +336,9 @@ type TbResult interface {
 }
 
 type tbResult struct {
-	wdl  int
-	from int
-	to   int
+	wdl      int
+	from     int
+	to       int
 	promotes int
 	ep       int
 	dtz      int
@@ -359,39 +356,39 @@ func newTbResult(cResult C.unsigned) TbResult {
 	return res
 }
 
-func (this tbResult) Move() chess.Move {
+func (r tbResult) Move() chess.Move {
 	return chess.NewMove(
-		chess.Square(this.from),
-		chess.Square(this.to),
-		tbPromoToChessPromo(this.promotes),
+		chess.Square(r.from),
+		chess.Square(r.to),
+		tbPromoToChessPromo(r.promotes),
 		chess.MoveTag(0),
 	)
 }
 
-func (this tbResult) WDL() WDL {
-	return WDL(this.wdl)
+func (r tbResult) WDL() WDL {
+	return WDL(r.wdl)
 }
 
-func (this tbResult) DTZ() int {
-	return this.dtz
+func (r tbResult) DTZ() int {
+	return r.dtz
 }
 
 /////////////////////////////////////////////////////
 
-// Suggests a move, a rank, a score, and a predicted principal variation.
+// TbRootMove suggests a move, a rank, a score, and a predicted principal variation.
 type TbRootMove interface {
 	TbMove
-	// Principal Variation
+	// PV stands for Principal Variation
 	PV() []chess.Move
 	Score() int
 	Rank() int
 }
 
 type tbRootMove struct {
-	move tbMove
-	pv []tbMove
+	move  tbMove
+	pv    []tbMove
 	score int
-	rank int
+	rank  int
 }
 
 func newRootMove(cResult C.struct_TbRootMove) TbRootMove {
@@ -406,24 +403,24 @@ func newRootMove(cResult C.struct_TbRootMove) TbRootMove {
 	return res
 }
 
-func (this tbRootMove) Move() chess.Move {
-	return this.move.Move()
+func (rm tbRootMove) Move() chess.Move {
+	return rm.move.Move()
 }
 
-func (this tbRootMove) PV() []chess.Move {
-	res := make([]chess.Move, len(this.pv))
-	for i, tbMove := range this.pv {
+func (rm tbRootMove) PV() []chess.Move {
+	res := make([]chess.Move, len(rm.pv))
+	for i, tbMove := range rm.pv {
 		res[i] = tbMove.Move()
 	}
 	return res
 }
 
-func (this tbRootMove) Score() int {
-	return this.score
+func (rm tbRootMove) Score() int {
+	return rm.score
 }
 
-func (this tbRootMove) Rank() int {
-	return this.rank
+func (rm tbRootMove) Rank() int {
+	return rm.rank
 }
 
 /////////////////////////////////////////////////////
@@ -432,9 +429,9 @@ type position struct {
 	*chess.Position
 }
 
-func (this *position) cCastling() cCastling {
+func (pos *position) cCastling() cCastling {
 	var res cCastling
-	castleRights := this.CastleRights()
+	castleRights := pos.CastleRights()
 	if castleRights.CanCastle(chess.White, chess.KingSide) {
 		res |= castling_K
 	}
@@ -450,13 +447,13 @@ func (this *position) cCastling() cCastling {
 	return res
 }
 
-func (this *position) cPos() cPos {
+func (pos *position) cPos() cPosType {
 	var white, black, kings, queens, rooks, bishops, knights, pawns uint64
 	var rule50 uint8
 	var ep uint8
 	var turn bool
 	var b uint64
-	board := this.Board()
+	board := pos.Board()
 	for sq := 0; sq < 64; sq++ {
 		piece := board.Piece(chess.Square(sq))
 		b = 1 << sq
@@ -499,12 +496,12 @@ func (this *position) cPos() cPos {
 			pawns |= b
 		}
 	}
-	rule50 = uint8(this.HalfMoveClock())
-	if temp := this.EnPassantSquare(); temp != chess.NoSquare {
+	rule50 = uint8(pos.HalfMoveClock())
+	if temp := pos.EnPassantSquare(); temp != chess.NoSquare {
 		ep = uint8(temp)
 	}
-	turn = this.Turn() != chess.Black
-	return cPos{
+	turn = pos.Turn() != chess.Black
+	return cPosType{
 		white:   C.uint64_t(white),
 		black:   C.uint64_t(black),
 		kings:   C.uint64_t(kings),

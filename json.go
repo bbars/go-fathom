@@ -2,48 +2,48 @@ package fathom
 
 import (
 	"encoding/json"
-	
+
 	"github.com/notnil/chess"
 )
 
-func (this WDL) MarshalJSON() ([]byte, error) {
-	return json.Marshal(this.String())
+func (wdl WDL) MarshalJSON() ([]byte, error) {
+	return json.Marshal(wdl.String())
 }
 
-func (this tbMove) MarshalJSON() ([]byte, error) {
-	return this.Move().MarshalJSON()
+func (m tbMove) MarshalJSON() ([]byte, error) {
+	return m.Move().MarshalJSON()
 }
 
-func (this tbMoveLong) MarshalJSON() ([]byte, error) {
-	return this.Move().MarshalJSON()
+func (ml tbMoveLong) MarshalJSON() ([]byte, error) {
+	return ml.Move().MarshalJSON()
 }
 
 type _tbResultJson struct {
 	Move chess.Move `json:"move"`
-	WDL WDL `json:"wdl"`
-	DTZ int `json:"dtz"`
+	WDL  WDL        `json:"wdl"`
+	DTZ  int        `json:"dtz"`
 }
 
-func (this tbResult) MarshalJSON() ([]byte, error) {
+func (r tbResult) MarshalJSON() ([]byte, error) {
 	return json.Marshal(_tbResultJson{
-		Move: this.Move(),
-		WDL: this.WDL(),
-		DTZ: this.DTZ(),
+		Move: r.Move(),
+		WDL:  r.WDL(),
+		DTZ:  r.DTZ(),
 	})
 }
 
 type _tbRootMoveJson struct {
-	Move chess.Move `json:"move"`
-	PV []chess.Move `json:"pv"`
-	Score int `json:"score"`
-	Rank int `json:"rank"`
+	Move  chess.Move   `json:"move"`
+	PV    []chess.Move `json:"pv"`
+	Score int          `json:"score"`
+	Rank  int          `json:"rank"`
 }
 
-func (this tbRootMove) MarshalJSON() ([]byte, error) {
+func (rm tbRootMove) MarshalJSON() ([]byte, error) {
 	return json.Marshal(_tbRootMoveJson{
-		Move: this.Move(),
-		PV: this.PV(),
-		Score: this.Score(),
-		Rank: this.Rank(),
+		Move:  rm.Move(),
+		PV:    rm.PV(),
+		Score: rm.Score(),
+		Rank:  rm.Rank(),
 	})
 }
