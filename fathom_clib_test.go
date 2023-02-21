@@ -3,16 +3,35 @@ package fathom
 import (
 	"flag"
 	"os"
-	"reflect"
 	"testing"
+
+	"github.com/notnil/chess"
+	"github.com/stretchr/testify/assert"
 )
 
 var tbDir string
 
 func TestMain(m *testing.M) {
-	flag.StringVar(&tbDir, "tbDir", "./tablebases", "Path to the directory containing Tablebase files")
+	flag.StringVar(&tbDir, "tbDir", "./tablebases_test", "Path to the directory containing Tablebase files")
 	flag.Parse()
 	os.Exit(m.Run())
+}
+
+func mustParseFen(t *testing.T, fen string) *chess.Position {
+	pos := &chess.Position{}
+	err := pos.UnmarshalText([]byte(fen))
+	if err != nil {
+		t.Fatal("broken test case: unable to parse FEN")
+	}
+	return pos
+}
+
+func mustNewFathom(t *testing.T) Fathom {
+	f, err := NewFathom(tbDir)
+	if err != nil {
+		t.Fatal("broken test case: unable to instantiate Fathom")
+	}
+	return f
 }
 
 func TestNewFathom(t *testing.T) {
@@ -27,8 +46,10 @@ func TestNewFathom(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got, err := NewFathom(tt.tbDir)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("NewFathom() error = %v, wantErr %v", err, tt.wantErr)
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
 			}
 			if got != nil {
 				got.Close()
@@ -54,13 +75,12 @@ func TestWDL_MarshalJSON(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got, err := tt.this.MarshalJSON()
-			if (err != nil) != tt.wantErr {
-				t.Errorf("MarshalJSON() error = %v, wantErr %v", err, tt.wantErr)
-				return
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
 			}
-			if !reflect.DeepEqual(got, []byte(tt.want)) {
-				t.Errorf("MarshalJSON() got = %v, want %v", got, tt.want)
-			}
+			assert.JSONEq(t, tt.want, string(got))
 		})
 	}
 }
@@ -80,9 +100,53 @@ func TestWDL_String(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := tt.this.String(); got != tt.want {
-				t.Errorf("String() = %v, want %v", got, tt.want)
+			got := tt.this.String()
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func Test_fathom_ProbeWDL(t *testing.T) {
+	tests := []struct {
+		name    string
+		fen     string
+		want    WDL
+		wantErr bool
+	}{
+		{
+			name:    "win",
+			fen:     "8/4K3/8/8/8/7R/3k4/8 w - - 0 1",
+			want:    Win,
+			wantErr: false,
+		},
+		{
+			name:    "loss",
+			fen:     "8/4K3/8/8/8/7r/3k4/8 w - - 0 1",
+			want:    Loss,
+			wantErr: false,
+		},
+		{
+			name:    "draw",
+			fen:     "8/4K3/8/8/8/8/3k4/8 w - - 0 1",
+			want:    Draw,
+			wantErr: false,
+		},
+	}
+
+	f := mustNewFathom(t)
+	defer f.Close()
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pos := mustParseFen(t, tt.fen)
+
+			got, err := f.ProbeWDL(pos)
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
 			}
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }
